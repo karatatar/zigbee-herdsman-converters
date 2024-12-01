@@ -1135,6 +1135,76 @@ export const valueConverter = {
             },
         };
     },
+    ZWT07_schedule: {
+        from: (value: number[], meta: Fz.Meta, options: KeyValue) => {
+            const programmingMode = [];
+            for (let i = 0; i < 8; i++) {
+                const start = i * 4;
+                const time = value[start].toString().padStart(2, '0') + ':' + value[start + 1].toString().padStart(2, '0');
+                const temp = (value[start + 2] * 256 + value[start + 3]) / 10;
+                const tempStr = temp.toFixed(1) + '°C';
+                programmingMode.push(time + '/' + tempStr);
+            }
+            meta.state['schedule_weekday'] = programmingMode.slice(0, 6).join(' ');
+            meta.state['schedule_weekend'] = programmingMode.slice(6, 8).join(' ');
+            return programmingMode.slice(0, 8).join(' ');
+        },
+        to: async (value: string, meta: Tz.Meta) => {
+            const payload: number[] = [];
+            let scheduleWeekday: string;
+            let scheduleWeekend: string;
+            if (meta.message.prototype.hasOwnProperty.call('schedule_weekday')) {
+                scheduleWeekday = value;
+                scheduleWeekend = meta.state['schedule_weekend'] as string;
+            } else {
+                scheduleWeekday = meta.state['schedule_weekday'] as string;
+                scheduleWeekend = value;
+            }
+
+            function scheduleToRaw(key: string, input: string, number: number, payload: number[], meta: Tz.Meta) {
+                const items = input.trim().split(/\s+/);
+                if (items.length != number) {
+                    throw new Error('Wrong number of items for ' + key + ' :' + items.length);
+                } else {
+                    for (let i = 0; i < number; i++) {
+                        const timeTemperature = items[i].split('/');
+                        if (timeTemperature.length != 2) {
+                            throw new Error('Invalid schedule: wrong transition format: ' + items[i]);
+                        }
+                        const hourMinute = timeTemperature[0].split(':', 2);
+                        const hour = parseInt(hourMinute[0]);
+                        const minute = parseInt(hourMinute[1]);
+                        const temperature = parseFloat(timeTemperature[1]);
+                        if (
+                            !utils.isNumber(hour) ||
+                            !utils.isNumber(temperature) ||
+                            !utils.isNumber(minute) ||
+                            hour < 0 ||
+                            hour >= 24 ||
+                            minute < 0 ||
+                            minute >= 60 ||
+                            temperature < 5 ||
+                            temperature >= 35
+                        ) {
+                            throw new Error(
+                                'Invalid hour, minute or temperature (5<t<35) in ' +
+                                    key +
+                                    ' of: `' +
+                                    items[i] +
+                                    '`; Format is `hh:m/cc.c` or `hh:mm/cc.c°C`',
+                            );
+                        }
+                        const temperature10 = Math.round(temperature * 10);
+                        payload.push(hour, minute, (temperature10 >> 8) & 0xff, temperature10 & 0xff);
+                    }
+                }
+                return;
+            }
+            scheduleToRaw('schedule_weekday', scheduleWeekday, 6, payload, meta);
+            scheduleToRaw('schedule_weekend', scheduleWeekend, 2, payload, meta);
+            return payload;
+        },
+    },
     thermostatGtz10SystemModeAndPreset: (toKey: string) => {
         return {
             from: (v: string) => {
